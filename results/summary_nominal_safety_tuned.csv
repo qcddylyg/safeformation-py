@@ -1,0 +1,3 @@
+scenario,controller,controller_variant,seed,delay_ms,final_formation_rmse,max_formation_error,min_obstacle_distance,max_active_link_distance,input_peak,input_rms,rnn_error_available,saturation_ratio,communication_violation_samples,obstacle_violation_samples,finite,success
+nominal,barrier_pd,heuristic_barrier_pd,42,0.0,0.020839490438305096,5.221967053545649,1.231409607250838,4.123196933596574,20.0,1.0567876794850406,False,0.0004249150169966007,0,0,True,True
+nominal,full,engineering_stabilized,42,0.0,0.02074813046929608,5.221967053545649,1.2305169047182214,4.123228638792425,20.0,1.03737930426096,False,0.0004249150169966007,0,0,True,True

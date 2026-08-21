@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+.vscode/
+*.log
+*.tmp
+results/raw/
+results/runs/
+simulation_results/
+
+# Keep generated evidence only when it is intentionally staged.
+*.mat
+*.pkl
+*.mp4
