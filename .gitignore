@@ -10,6 +10,8 @@ env/
 results/raw/
 results/runs/
 simulation_results/
+results/*.json
+results/summary_*.csv
 
 # Keep generated evidence only when it is intentionally staged.
 *.mat
