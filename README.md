@@ -19,8 +19,8 @@ deployment.
   nominal initial conditions.
 - Nonlinear follower dynamics, sinusoidal disturbance, input saturation,
   static or moving obstacle, and delayed neighbour/leader state use.
-- Low-gain PD, heuristic barrier-PD, adaptive no-barrier ablation, a
-  formula-only policy branch, and an engineering-stabilized full controller.
+- Low-gain PD, heuristic barrier-PD, ordinary actor-critic ADP, heuristic
+  barrier-ADP, plus a separately labelled engineering-stabilized branch.
 - Deterministic RK4 integration, per-run JSON manifests, and a CSV summary
   containing tracking, safety, connectivity, control-effort and completion
   metrics.
@@ -29,14 +29,14 @@ deployment.
 
 | CLI controller | Manifest variant | Meaning |
 |---|---|---|
-| `pd` | `low_gain_pd_baseline` | MATLAB-style low-gain PD baseline. |
-| `barrier_pd` | `heuristic_barrier_pd` | Heuristic barrier-PD, not a CBF-QP. |
-| `rnn_adp` | `adaptive_residual_surrogate` | Engineering adaptive ablation. |
-| `full` | `engineering_stabilized` | PD plus bounded adaptive residual. |
-| `paper_exact` | `formula_only_unvalidated` | Formula-shaped branch; not yet equivalence-validated. |
+| `low_gain_pd` (`pd`) | `low_gain_pd_baseline` | Low-gain formation PD baseline. |
+| `heuristic_barrier_pd` (`barrier_pd`) | `heuristic_barrier_pd` | Barrier-PD heuristic, not a CBF-QP. |
+| `ordinary_adp` (`rnn_adp`) | `ordinary_adp_no_barrier_actor_critic` | Actor-critic ADP without barrier state. |
+| `barrier_adp` (`paper_rnn_adp`, `paper_exact`) | `heuristic_barrier_adp_actor_critic` | Actor-critic ADP with heuristic barrier state. |
+| `engineering_stabilized` (`full`) | `engineering_stabilized` | PD plus bounded residual; appendix only. |
 
 The supplied MATLAB Case 4 explicitly adds a PD term and clips the output, so
-it is represented by `full`, not by `paper_exact`. See
+it is represented by `engineering_stabilized`, not by the barrier-ADP branch. See
 [`docs/paper_code_audit.md`](docs/paper_code_audit.md) before comparing results.
 
 ## Quick start
@@ -49,9 +49,9 @@ python -m pip install -r requirements.txt
 python tests\test_core.py
 
 python scripts\run_matrix.py --scenario nominal --steps 5000 --dt 0.01
-python scripts\run_matrix.py --scenario dynamic_obstacle --steps 5000 --dt 0.01 --controllers barrier_pd full
-python scripts\run_matrix.py --scenario delay --delay-ms 100 --steps 5000 --dt 0.01 --controllers barrier_pd full
-python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 0.01 --controllers barrier_pd full
+python scripts\run_matrix.py --scenario dynamic_obstacle --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
+python scripts\run_matrix.py --scenario delay --delay-ms 100 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
+python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
 ```
 
 The runner writes one JSON manifest per controller and a scenario CSV summary
@@ -66,11 +66,12 @@ The checked-in result summaries were produced with the commands below. The
 `--run-label` value prevents a later run from overwriting the evidence files.
 
 ```powershell
-python scripts\run_matrix.py --scenario nominal --steps 5000 --dt 0.01 --controllers barrier_pd full --run-label safety_tuned
-python scripts\run_matrix.py --scenario dynamic_obstacle --steps 5000 --dt 0.01 --controllers barrier_pd full --run-label moving
-python scripts\run_matrix.py --scenario delay --delay-ms 50 --steps 5000 --dt 0.01 --controllers barrier_pd full --run-label 50ms
-python scripts\run_matrix.py --scenario delay --delay-ms 100 --steps 5000 --dt 0.01 --controllers barrier_pd full --run-label 100ms
-python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 0.01 --controllers barrier_pd full --run-label mass120
+python scripts\run_matrix.py --scenario nominal --steps 5000 --dt 0.01 --controllers low_gain_pd heuristic_barrier_pd ordinary_adp barrier_adp --run-label main_nominal
+python scripts\run_matrix.py --scenario dynamic_obstacle --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp --run-label moving
+python scripts\run_matrix.py --scenario delay --delay-ms 50 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp --run-label 50ms
+python scripts\run_matrix.py --scenario delay --delay-ms 100 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp --run-label 100ms
+python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp --run-label mass120
+python scripts\run_matrix.py --scenario nominal --steps 5000 --dt 0.01 --controllers engineering_stabilized --run-label engineering_appendix
 ```
 
 The 100 ms delay run is intentionally retained as a failure case. Do not
@@ -82,8 +83,9 @@ interpret `success=false` as a crash: it means the safety radius was violated.
 2. Hold controller, seed, initial state, horizon and integration step fixed.
 3. Change one variable only: obstacle motion, delay, mass scale, or disturbance
    scale.
-4. Compare at least `barrier_pd` and `full`; keep failures rather than reducing
-   their horizon.
+4. Main tables compare `low_gain_pd`, `heuristic_barrier_pd`,
+   `ordinary_adp`, and `barrier_adp`; keep engineering_stabilized in a
+   separate appendix table and keep all failures.
 5. Report `final_formation_rmse`, safety/connectivity violations, input
    peak/RMS, saturation ratio, and `success` together. A lower tracking error
    alone does not establish safety.
@@ -108,10 +110,11 @@ The corresponding evidence-bounded numerical summary is
 
 ## Known limitations
 
-- The adaptive module is an engineering surrogate; it does not reproduce the
-  MATLAB continuous observer and critic/action weight updates exactly.
-- `paper_exact` is deliberately not presented as a validated result until
-  matched with a frozen formula-only reference.
+- The actor-critic module is a reproducible educational ADP surrogate; it
+  exposes online TD and weight diagnostics but does not reproduce the MATLAB
+  continuous observer and every paper update equation exactly.
+- `barrier_adp` is a heuristic barrier-plus-ADP experiment branch, not a CBF-QP
+  and not a line-by-line paper RNN-ADP reproduction.
 - The current layer is a numerical simulation. MuJoCo visualization and any
   physical robot claims remain outside this version.
 - A successful finite rollout is empirical evidence only, never a proof that a

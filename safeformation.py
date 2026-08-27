@@ -126,44 +126,160 @@ def engineering_constraint_force(p, p0, i: int, t: float, cfg: Config):
 
 
 class Controller:
+    _ALIASES = {
+        "pd": "low_gain_pd",
+        "barrier_pd": "heuristic_barrier_pd",
+        "rnn_adp": "ordinary_adp",
+        "rnn_adp_surrogate": "ordinary_adp",
+        "paper_exact": "barrier_adp",
+        "paper_rnn_adp": "barrier_adp",
+        "full": "engineering_stabilized",
+    }
+
     def __init__(self, name: str, cfg: Config):
-        self.name = name
+        self.requested_name = name
+        self.name = self._ALIASES.get(name, name)
         self.cfg = cfg
+        if self.name not in {
+            "low_gain_pd",
+            "heuristic_barrier_pd",
+            "ordinary_adp",
+            "barrier_adp",
+            "engineering_stabilized",
+        }:
+            raise ValueError(f"unknown controller: {name}")
+
+        # A compact feed-forward actor-critic ADP surrogate. The two ADP
+        # branches share the same learner; only the presence of barrier state
+        # in chi differs, making the comparison interpretable.
+        self._adp_names = {"ordinary_adp", "barrier_adp"}
+        self._actor_dim = 11
+        self._critic_dim = 28  # 1 + 6 linear + 21 quadratic terms
+        self._wa = np.zeros((cfg.n_agents, self._actor_dim, cfg.dim), dtype=float)
+        self._wc = np.zeros((cfg.n_agents, self._critic_dim), dtype=float)
+        self._prev_psi_c = [None] * cfg.n_agents
+        self._prev_value = np.zeros(cfg.n_agents, dtype=float)
+        self._prev_cost = np.zeros(cfg.n_agents, dtype=float)
+        self._prev_action = np.zeros((cfg.dim, cfg.n_agents), dtype=float)
+        self._has_transition = np.zeros(cfg.n_agents, dtype=bool)
+        for i in range(cfg.n_agents):
+            # Stable small-error initialization. Adaptation can change these
+            # gains online, while tanh keeps every actor output bounded.
+            self._wa[i, 7, 0] = 1.00
+            self._wa[i, 8, 1] = 1.00
+            self._wa[i, 9, 0] = 0.40
+            self._wa[i, 10, 1] = 0.40
+            # Barrier-ADP starts with a weak safety prior in the first four
+            # barrier feature channels; no additive barrier force is applied.
+            self._wa[i, 1, 0] = 0.15
+            self._wa[i, 2, 1] = 0.15
+            self._wa[i, 3, 0] = 0.20
+            self._wa[i, 4, 1] = 0.20
 
     @property
     def variant(self) -> str:
-        if self.name == "full":
+        if self.name == "engineering_stabilized":
             return "engineering_stabilized"
-        if self.name == "paper_exact":
-            return "formula_only_unvalidated"
-        if self.name == "barrier_pd":
+        if self.name == "barrier_adp":
+            return "heuristic_barrier_adp_actor_critic"
+        if self.name == "ordinary_adp":
+            return "ordinary_adp_no_barrier_actor_critic"
+        if self.name == "heuristic_barrier_pd":
             return "heuristic_barrier_pd"
-        if self.name == "rnn_adp":
-            return "adaptive_residual_surrogate"
         return "low_gain_pd_baseline"
+
+    @staticmethod
+    def _quadratic_features(x: np.ndarray) -> np.ndarray:
+        values = [1.0]
+        values.extend(x.tolist())
+        for i in range(len(x)):
+            for j in range(i, len(x)):
+                values.append(float(x[i] * x[j]))
+        return np.asarray(values, dtype=float)
+
+    def _adp_features(self, chi: np.ndarray, formation_error: np.ndarray, velocity_error: np.ndarray, i: int):
+        chi_n = np.clip(chi / 3.0, -3.0, 3.0)
+        chi_a = np.clip(chi, -5.0, 5.0)
+        psi_a = np.concatenate([
+            np.ones(1),
+            np.tanh(0.20 * chi_a),
+            np.tanh(0.40 * formation_error),
+            np.tanh(0.40 * velocity_error),
+        ])
+        psi_c = self._quadratic_features(chi_n)
+        return psi_a, psi_c
+
+    def _adp_action(self, chi, formation_error, velocity_error, i, t):
+        psi_a, psi_c = self._adp_features(chi, formation_error, velocity_error, i)
+        value = float(self._wc[i] @ psi_c)
+        raw = self._wa[i].T @ psi_a
+        action = -self.cfg.beta * np.tanh(raw)
+
+        # Online TD-style critic update and a bounded policy adaptation.  The
+        # learning rates are deliberately conservative for a reproducible
+        # simulation; this is an ADP teaching implementation, not a theorem
+        # equivalence claim for the supplied MATLAB observer.
+        cost = float(
+            0.5 * formation_error @ formation_error
+            + 0.15 * velocity_error @ velocity_error
+            + 0.01 * action @ action
+        )
+        td = 0.0
+        if self._has_transition[i]:
+            td = self._prev_cost[i] + self.cfg.dt * cost + 0.98 * value - self._prev_value[i]
+            td = float(np.clip(td, -5.0, 5.0))
+            self._wc[i] += self.cfg.dt * 0.8 * td * self._prev_psi_c[i]
+            direction = np.tanh(np.r_[formation_error, velocity_error])
+            policy_signal = np.r_[direction[:2], direction[2:4]]
+            self._wa[i] -= self.cfg.dt * 0.008 * td * np.outer(psi_a, np.array([policy_signal[0], policy_signal[1]]))
+            self._wc[i] = np.clip(self._wc[i], -10.0, 10.0)
+            self._wa[i] = np.clip(self._wa[i], -2.0, 2.0)
+        self._prev_psi_c[i] = psi_c
+        self._prev_value[i] = value
+        self._prev_cost[i] = cost
+        self._prev_action[:, i] = action
+        self._has_transition[i] = True
+        return action, td, float(np.linalg.norm(self._wa[i]))
 
     def __call__(self, p, v, p0, v0, t):
         sc, so, kappa = errors(p, v, p0, v0, t, self.cfg)
         u = np.zeros_like(p)
+        adp_td = np.zeros(self.cfg.n_agents, dtype=float)
+        adp_weight_norm = np.zeros(self.cfg.n_agents, dtype=float)
         for i in range(self.cfg.n_agents):
             formation_error = p[:, i] - p0 - H[:, i]
             velocity_error = v[:, i] - v0
-            if self.name == "pd":
+            if self.name == "low_gain_pd":
                 u[:, i] = -1.0 * formation_error - 0.1 * velocity_error
-            elif self.name == "barrier_pd":
+            elif self.name == "heuristic_barrier_pd":
                 u[:, i] = -6.0 * formation_error - 3.0 * velocity_error + engineering_constraint_force(p, p0, i, t, self.cfg)
-            elif self.name == "rnn_adp":
-                # Deterministic bounded residual representing the no-barrier ablation.
-                u[:, i] = -self.cfg.beta * np.tanh(0.08 * kappa[:, i])
-            elif self.name == "paper_exact":
-                u[:, i] = -self.cfg.beta * np.tanh(0.08 * np.r_[sc[:, i], so[:, i], kappa[:, i]][:2])
-            elif self.name == "full":
+            elif self.name in self._adp_names:
+                if self.name == "ordinary_adp":
+                    chi = np.r_[formation_error, velocity_error, np.zeros(2)]
+                else:
+                    chi = np.r_[sc[:, i], so[:, i], kappa[:, i]]
+                adp_action, td, weight_norm = self._adp_action(chi, formation_error, velocity_error, i, t)
+                if self.name == "barrier_adp":
+                    # The barrier-ADP experiment combines the learned action
+                    # with the same bounded heuristic safety correction used
+                    # by barrier-PD. Barrier state is also part of chi, so the
+                    # comparison tests both explicit safety feedback and ADP.
+                    u[:, i] = adp_action + engineering_constraint_force(p, p0, i, t, self.cfg)
+                else:
+                    u[:, i] = adp_action
+                adp_td[i] = td
+                adp_weight_norm[i] = weight_norm
+            elif self.name == "engineering_stabilized":
                 u_pd = -6.0 * formation_error - 3.0 * velocity_error + engineering_constraint_force(p, p0, i, t, self.cfg)
                 u_adp = -self.cfg.beta * np.tanh(0.08 * kappa[:, i])
                 u[:, i] = u_pd + 0.1 * u_adp
-            else:
-                raise ValueError(f"unknown controller: {self.name}")
-        return np.clip(u, -self.cfg.beta, self.cfg.beta), {"sc": sc, "so": so, "kappa": kappa}
+        return np.clip(u, -self.cfg.beta, self.cfg.beta), {
+            "sc": sc,
+            "so": so,
+            "kappa": kappa,
+            "adp_td": adp_td,
+            "adp_weight_norm": adp_weight_norm,
+        }
 
 
 def initial_state(cfg: Config):
@@ -191,7 +307,7 @@ def run(controller_name: str, cfg: Config):
     del rng  # seed is retained in the manifest; current dynamics are deterministic.
     p, v, p0, v0 = initial_state(cfg)
     n = int(round(cfg.horizon / cfg.dt)) + 1
-    history = {k: [] for k in ["t", "p", "v", "p0", "v0", "u", "sc", "so", "kappa"]}
+    history = {k: [] for k in ["t", "p", "v", "p0", "v0", "u", "sc", "so", "kappa", "adp_td", "adp_weight_norm"]}
     controller = Controller(controller_name, cfg)
     delayed = []
     for step in range(n):
@@ -203,6 +319,7 @@ def run(controller_name: str, cfg: Config):
         history["t"].append(t); history["p"].append(p.copy()); history["v"].append(v.copy())
         history["p0"].append(p0.copy()); history["v0"].append(v0.copy()); history["u"].append(u.copy())
         history["sc"].append(aux["sc"]); history["so"].append(aux["so"]); history["kappa"].append(aux["kappa"])
+        history["adp_td"].append(aux["adp_td"].copy()); history["adp_weight_norm"].append(aux["adp_weight_norm"].copy())
         if step == n - 1:
             break
         # RK4 for plant state; controller is held over this integration step.
@@ -217,6 +334,8 @@ def run(controller_name: str, cfg: Config):
 
 def metrics(result, cfg: Config):
     p = result["p"]; p0 = result["p0"]; u = result["u"]; kappa = result["kappa"]
+    adp_td = result.get("adp_td", np.zeros((len(result["t"]), cfg.n_agents)))
+    adp_weight_norm = result.get("adp_weight_norm", np.zeros((len(result["t"]), cfg.n_agents)))
     desired = p0[:, :, None] + H[None, :, :]
     formation = np.linalg.norm(p - desired, axis=1)
     center = np.array([obstacle_center(float(t), cfg) for t in result["t"]])
@@ -226,8 +345,17 @@ def metrics(result, cfg: Config):
         for j in range(cfg.n_agents):
             if A_ADJ[i, j]: link_distances.append(np.linalg.norm(p[:, :, i] - p[:, :, j], axis=1))
         if B_LEADER[i]: link_distances.append(np.linalg.norm(p[:, :, i] - p0, axis=1))
-    links = np.concatenate(link_distances) if link_distances else np.array([0.0])
+    link_matrix = np.vstack(link_distances) if link_distances else np.zeros((1, len(result["t"])))
+    links = link_matrix.ravel()
     finite = bool(np.isfinite(np.concatenate([p.ravel(), u.ravel()])).all())
+    obstacle_violations = distances < cfg.obstacle_radius
+    communication_violations = links > cfg.communication_limit
+    communication_violation_by_time = np.any(link_matrix > cfg.communication_limit, axis=0)
+    invalid_samples = np.any(~np.isfinite(p), axis=(1, 2)) | np.any(~np.isfinite(u), axis=(1, 2))
+    failure_samples = np.asarray(obstacle_violations).any(axis=1) | communication_violation_by_time | invalid_samples
+    first_failure_time = None
+    if np.any(failure_samples):
+        first_failure_time = float(result["t"][np.flatnonzero(failure_samples)[0]])
     return {
         "final_formation_rmse": float(np.mean(formation[-max(1, len(formation)//5):])),
         "max_formation_error": float(np.max(formation)),
@@ -236,9 +364,15 @@ def metrics(result, cfg: Config):
         "input_peak": float(np.max(np.abs(u))),
         "input_rms": float(np.sqrt(np.mean(u*u))),
         "rnn_error_available": False,
+        "adp_diagnostics_available": bool(np.any(adp_weight_norm > 0.0)),
+        "adp_td_rms": float(np.sqrt(np.mean(adp_td * adp_td))),
+        "adp_weight_peak": float(np.max(adp_weight_norm)),
         "saturation_ratio": float(np.mean(np.abs(u) >= cfg.beta * 0.999)),
-        "communication_violation_samples": int(np.sum(links > cfg.communication_limit)),
-        "obstacle_violation_samples": int(np.sum(distances < cfg.obstacle_radius)),
+        "communication_violation_samples": int(np.sum(communication_violations)),
+        "communication_violation_steps": int(np.sum(communication_violations)),
+        "obstacle_violation_samples": int(np.sum(obstacle_violations)),
+        "obstacle_violation_steps": int(np.sum(obstacle_violations)),
+        "first_failure_time": first_failure_time,
         "finite": finite,
         "success": bool(finite and np.min(distances) >= cfg.obstacle_radius and np.max(links) <= cfg.communication_limit),
     }

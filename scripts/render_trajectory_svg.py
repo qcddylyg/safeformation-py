@@ -29,7 +29,11 @@ def polyline(points: np.ndarray) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--controller", choices=["pd", "barrier_pd", "rnn_adp", "paper_exact", "full"], default="full")
+    parser.add_argument(
+        "--controller",
+        choices=["low_gain_pd", "heuristic_barrier_pd", "ordinary_adp", "barrier_adp", "engineering_stabilized", "pd", "barrier_pd", "rnn_adp", "paper_exact", "paper_rnn_adp", "full"],
+        default="barrier_adp",
+    )
     parser.add_argument("--scenario", choices=["nominal", "dynamic_obstacle", "delay", "mass", "disturbance"], default="nominal")
     parser.add_argument("--delay-ms", type=float, default=0.0)
     parser.add_argument("--output", type=Path, default=ROOT / "results" / "figures" / "full_nominal_trajectory.svg")

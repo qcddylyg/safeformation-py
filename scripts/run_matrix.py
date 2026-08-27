@@ -19,7 +19,12 @@ def main():
     ap.add_argument("--mass-scale", type=float, default=1.2)
     ap.add_argument("--disturbance-scale", type=float, default=2.0)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--controllers", nargs="+", default=["pd", "barrier_pd", "rnn_adp", "paper_exact", "full"])
+    ap.add_argument(
+        "--controllers",
+        nargs="+",
+        default=["low_gain_pd", "heuristic_barrier_pd", "ordinary_adp", "barrier_adp"],
+        help="Main comparison: low-gain PD, heuristic barrier-PD, ordinary ADP, and heuristic barrier-ADP. Use engineering_stabilized explicitly for an appendix run.",
+    )
     ap.add_argument("--run-label", default="", help="Optional stable label, e.g. delay_100ms; prevents result overwrites.")
     args = ap.parse_args()
     horizon = args.steps * args.dt if args.steps else 10.0
@@ -33,11 +38,13 @@ def main():
     label = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in args.run_label)
     stem = f"{args.scenario}_{label}" if label else args.scenario
     for name in args.controllers:
+        controller = Controller(name, cfg)
         result = run(name, cfg)
         row = {
             "scenario": args.scenario,
-            "controller": name,
-            "controller_variant": Controller(name, cfg).variant,
+            "controller": controller.name,
+            "requested_controller": name,
+            "controller_variant": controller.variant,
             "seed": cfg.seed,
             "delay_ms": cfg.delay_steps * cfg.dt * 1000.0,
             **metrics(result, cfg),

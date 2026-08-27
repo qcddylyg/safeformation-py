@@ -8,10 +8,11 @@ oracle for initial conditions, topology, dynamics, barrier settings, controller
 labels, and evaluation definitions. Its Case 4 is a **PD-stabilized engineering
 variant**, because it explicitly uses `u_total = u_pd + 0.1 * u_adp`.
 
-The Python controller name `full` therefore means `engineering_stabilized`.
-`paper_exact` is reserved for the formula-derived ADP policy and is not treated
-as a validated reproduction until its updates and output match a separately
-verified paper implementation.
+The Python controller name `engineering_stabilized` therefore means the
+PD-stabilized engineering branch. The project now also exposes ordinary
+actor-critic ADP and heuristic barrier-ADP experiment branches, but they
+remain numerical surrogates and are not treated as line-by-line paper
+reproductions.
 
 ## Mapping
 
@@ -22,11 +23,11 @@ verified paper implementation.
 | `dp0`, `dv0` | leader oscillator | `derivatives` | implemented |
 | follower `dv` | nonlinear velocity term, input, sinusoidal disturbance | `derivatives` | implemented |
 | `compute_augmented_error` | communication, obstacle, and velocity errors | `errors` and barrier helpers | engineering approximation |
-| Case 1 | low-gain saturated formation PD | `pd` | implemented |
-| Case 2 | PD with double-barrier error | `barrier_pd` | implemented |
-| Case 3 | RNN/ADP without barriers | `rnn_adp` | adaptive surrogate only |
-| Case 4 | `u_pd + 0.1 * u_adp` with saturation | `full` | engineering-stabilized branch |
-| Case 4 formula-only policy | paper equation (99) branch | `paper_exact` | reserved; no equivalence claim |
+| Case 1 | low-gain saturated formation PD | `low_gain_pd` | implemented |
+| Case 2 | PD with double-barrier error | `heuristic_barrier_pd` | heuristic implementation |
+| Case 3 | ordinary ADP without barriers | `ordinary_adp` | actor-critic surrogate |
+| Proposed experiment | heuristic barrier-ADP | `barrier_adp` | actor-critic surrogate |
+| Engineering appendix | `u_pd + 0.1 * u_adp` with saturation | `engineering_stabilized` | engineering-stabilized branch |
 | post-processing figures | tracking, obstacle, link, control and weight diagnostics | metrics, CSV, plots | partial; weight diagnostics excluded |
 
 ## Important discrepancies
@@ -37,7 +38,7 @@ verified paper implementation.
    use 50 seconds. Cross-method comparisons need an explicitly shared horizon.
 3. MATLAB integrates observer and actor/critic weights as continuous states;
    the current Python MVP does not reproduce those exact updates. Its adaptive
-   components are engineering surrogates, so RNN/ADP findings are empirical
+   components are engineering surrogates, so ADP findings are empirical
    only.
 4. MATLAB declares `D_threshold = D_comm / sqrt(m)` for component-wise barrier
    construction, but its plots also show that threshold for Euclidean link
@@ -67,10 +68,10 @@ The MATLAB implementation conflicts with this in both its post-processing path
 side (lines 468--481): it computes a PD action from `s_c + s_o` and `kappa`,
 adds `0.1 * u_adp`, then clips the sum at `0.95 * beta_sat`.
 
-**Decision:** retain this controller as `engineering_stabilized`; implement a
-separate `paper_exact` branch only after encoding the formula-only policy and
-paper-specified actor initialisation. Results and manifests must include
-`controller_variant`; neither version may be reported simply as “Full”.
+**Decision:** retain this controller as `engineering_stabilized`. The separate
+`barrier_adp` branch is an explicitly labelled actor-critic experiment branch;
+results and manifests must include `controller_variant` and must not call it a
+formal RNN system-identification reproduction.
 
 ### Baseline definitions are not yet paper-equivalent
 
@@ -88,9 +89,10 @@ paper-specified actor initialisation. Results and manifests must include
   (lines 284--290, 459--465, and 545--603). Thus its learning objective and
   deployed actor state are not a single self-consistent no-barrier system.
 
-**Decision:** label current MATLAB-style ports `legacy_pd`,
-`barrier_pd_heuristic`, and `legacy_rnn_adp` until a fair PD baseline, a true
-CBF-QP baseline, and a self-consistent raw-error ADP ablation are implemented.
+**Decision:** the Python project now uses a self-consistent raw-error
+`ordinary_adp` and a barrier-state `barrier_adp` experiment branch. Both remain
+numerical actor-critic surrogates; neither is a CBF-QP or a formal line-by-line
+reproduction of the MATLAB RNN observer.
 
 ### Comparison protocol differs across cases
 
@@ -132,11 +134,11 @@ script reports final instantaneous formation error, minimum obstacle distance,
 and peak input, but not the paper's final-5-second mean error, maximum active
 link distance, tail RNN errors, nonfinite-state count, or full-horizon status.
 
-**Decision:** reproduce deterministic actor initialization in `paper_exact`, or
-state that it is unavailable. The unified evaluator must emit at least tail-5s
-formation error, minimum obstacle distance, maximum physical active-link
-distance, input peak/RMS/saturation ratio, tail position and velocity observer
-errors, completion status, and first violation time.
+**Decision:** the unified evaluator emits tail formation error, minimum obstacle
+distance, maximum physical active-link distance, input peak/RMS/saturation
+ratio, ADP TD/weight diagnostics, completion status, and first violation time.
+The ADP branches remain explicitly labelled surrogates until a MATLAB-to-Python
+trajectory match is completed.
 
 ## Frozen paper-exact configuration
 

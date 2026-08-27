@@ -3,8 +3,9 @@
 ## Objective
 
 Measure how the numerical controller variants behave under one controlled
-change at a time. The protocol supports descriptive engineering comparisons;
-it does not make a new stability or safety claim.
+change at a time. The main comparison is between traditional baselines and
+actor-critic ADP branches with/without heuristic barrier state; the protocol supports descriptive
+engineering comparisons and does not make a new stability or safety claim.
 
 ## Frozen nominal configuration
 
@@ -23,24 +24,24 @@ failed run with a completed 50-second run.
 
 | Set | Independent variable | Conditions | Minimum controllers |
 |---|---|---|---|
-| Nominal | none | static / zero delay / nominal mass | `pd`, `barrier_pd`, `rnn_adp`, `full` |
-| Dynamic obstacle | obstacle trajectory | static, dynamic | `barrier_pd`, `full` |
-| Delay | delayed state age | 0, 50, 100 ms | `barrier_pd`, `full` |
-| Mass mismatch | `mass_scale` | 1.0, 1.2 | `barrier_pd`, `full` |
-| Disturbance | `disturbance_scale` | 1.0, 2.0 | `barrier_pd`, `full` |
+| Nominal | none | static / zero delay / nominal mass | `low_gain_pd`, `heuristic_barrier_pd`, `ordinary_adp`, `barrier_adp` |
+| Dynamic obstacle | obstacle trajectory | static, dynamic | `heuristic_barrier_pd`, `barrier_adp` |
+| Delay | delayed state age | 0, 50, 100 ms | `heuristic_barrier_pd`, `barrier_adp` |
+| Mass mismatch | `mass_scale` | 1.0, 1.2 | `heuristic_barrier_pd`, `barrier_adp` |
+| Disturbance | `disturbance_scale` | 1.0, 2.0 | `heuristic_barrier_pd`, `barrier_adp` |
 
-`paper_exact` has a reserved output label and must not be included in a main
-result table until it has been independently formula-validated.
+`engineering_stabilized` is an optional appendix controller. It must not be
+used as a proxy for the main heuristic barrier-ADP comparison.
 
 ## Commands
 
 ```powershell
 python scripts\run_matrix.py --scenario nominal --steps 5000 --dt 0.01
-python scripts\run_matrix.py --scenario dynamic_obstacle --steps 5000 --dt 0.01 --controllers barrier_pd full
-python scripts\run_matrix.py --scenario delay --delay-ms 50 --steps 5000 --dt 0.01 --controllers barrier_pd full
-python scripts\run_matrix.py --scenario delay --delay-ms 100 --steps 5000 --dt 0.01 --controllers barrier_pd full
-python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 0.01 --controllers barrier_pd full
-python scripts\run_matrix.py --scenario disturbance --disturbance-scale 2.0 --steps 5000 --dt 0.01 --controllers barrier_pd full
+python scripts\run_matrix.py --scenario dynamic_obstacle --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
+python scripts\run_matrix.py --scenario delay --delay-ms 50 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
+python scripts\run_matrix.py --scenario delay --delay-ms 100 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
+python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
+python scripts\run_matrix.py --scenario disturbance --disturbance-scale 2.0 --steps 5000 --dt 0.01 --controllers heuristic_barrier_pd barrier_adp
 ```
 
 ## Required result fields
@@ -49,8 +50,7 @@ python scripts\run_matrix.py --scenario disturbance --disturbance-scale 2.0 --st
 - `min_obstacle_distance`, `obstacle_violation_steps`
 - `max_active_link_distance`, `communication_violation_steps`
 - `input_peak`, `input_rms`, and `saturation_ratio`
-- `rnn_error_available` (currently `false`: no paper-equivalent RNN observer
-  metric is claimed in this MVP)
+- `adp_diagnostics_available`, `adp_td_rms`, and `adp_weight_peak` for ADP branches
 - `finite`, `success`, and `first_failure_time`
 
 ## Interpretation rules
@@ -61,6 +61,9 @@ python scripts\run_matrix.py --scenario disturbance --disturbance-scale 2.0 --st
    plot the successful prefix.
 3. The moving-obstacle and delay tests sit outside the paper's static,
    no-delay theorem. State them as stress-test observations only.
-4. Do not call `barrier_pd` a CBF-QP. Do not call `full` the pure paper policy.
-5. Three or fewer repeat runs support descriptive variation, not broad
+4. Do not call `heuristic_barrier_pd` a CBF-QP. Do not call `barrier_adp` a
+   paper RNN system-identification reproduction.
+5. A lower tracking error alone does not establish that ADP is superior;
+   report safety and control effort together and retain failures.
+6. Three or fewer repeat runs support descriptive variation, not broad
    statistical or sim-to-real conclusions.

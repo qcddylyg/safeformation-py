@@ -2,65 +2,65 @@
 
 ## Scope
 
-These are deterministic Python/RK4 engineering simulations of the supplied
-four-agent MATLAB scenario. `barrier_pd` is a heuristic barrier-PD controller;
-`full` is a PD-stabilized engineering variant with a bounded adaptive residual.
-Neither result validates a CBF-QP, the paper's pure equation-(99) policy, a
-dynamic-obstacle theorem, or a physical robot deployment.
+These are deterministic Python/RK4 simulations of the supplied four-agent
+scenario. The main comparison is a 2x2 design: PD versus ADP, with and without
+the heuristic barrier mechanism. The former `full` controller is retained as
+`engineering_stabilized` for an appendix only.
 
-All runs use `dt=0.01 s`, horizon `50 s`, seed `42`, saturation bound `20`,
-and the same initial state. Values are one deterministic rollout per condition.
-The source CSV files are linked below.
+All runs use `dt=0.01 s`, horizon `50 s`, seed `42`, input bound `20`, and the
+same initial state. The ADP branches expose online TD and actor-weight
+diagnostics, but remain numerical actor-critic surrogates rather than a
+line-by-line reproduction of the paper's RNN system-identification method.
 
-## Main results
+## Nominal comparison
 
-| Condition | Controller | Final formation RMSE (m) | Min obstacle distance (m) | Max link distance (m) | Input RMS | Safety result |
+| Controller | Final formation RMSE (m) | Min obstacle distance (m) | Input RMS | Obstacle violations | Result |
+|---|---:|---:|---:|---:|---|
+| Low-gain PD | 0.98043 | 0.1765 | 1.0496 | 255 | failed |
+| Heuristic barrier-PD | 0.02084 | 1.2314 | 1.0568 | 0 | success |
+| Ordinary ADP (no barrier) | 0.06297 | 0.2364 | 0.9358 | 897 | failed |
+| Heuristic barrier-ADP | 0.10222 | 1.4628 | 1.1919 | 0 | success |
+
+The comparison isolates two contributions. Adding the heuristic barrier changes
+ordinary ADP from an unsafe rollout to a successful nominal rollout with a
+larger obstacle margin. ADP alone reduces control RMS relative to low-gain PD,
+but does not guarantee obstacle safety. In this surrogate implementation,
+barrier-PD has lower terminal tracking error than barrier-ADP, so no blanket
+claim of ADP superiority is made.
+
+## Stress tests
+
+| Condition | Controller | Final RMSE | Min obstacle distance | Input RMS | Obstacle violations | Result |
 |---|---|---:|---:|---:|---:|---|
-| Nominal | barrier-PD | 0.02084 | 1.2314 | 4.1232 | 1.0568 | success |
-| Nominal | full engineering variant | 0.02075 | 1.2305 | 4.1232 | 1.0374 | success |
-| Moving obstacle | barrier-PD | 0.02084 | 1.2630 | 4.1234 | 1.0274 | success |
-| Moving obstacle | full engineering variant | 0.02075 | 1.2764 | 4.1234 | 1.0126 | success |
-| 50 ms delay | barrier-PD | 0.02084 | 1.2067 | 4.1250 | 1.2505 | success |
-| 50 ms delay | full engineering variant | 0.02075 | 1.2052 | 4.1254 | 1.2206 | success |
-| +20% mass | barrier-PD | 0.02075 | 1.2304 | 4.1232 | 1.0566 | success |
-| +20% mass | full engineering variant | 0.02066 | 1.2304 | 4.1232 | 1.0371 | success |
+| Moving obstacle | barrier-PD | 0.02084 | 1.2630 | 1.0274 | 0 | success |
+| Moving obstacle | barrier-ADP | 0.09554 | 1.5028 | 1.1547 | 0 | success |
+| 50 ms delay | barrier-PD | 0.02084 | 1.2067 | 1.2505 | 0 | success |
+| 50 ms delay | barrier-ADP | 0.15392 | 1.3362 | 1.5494 | 0 | success |
+| 100 ms delay | barrier-PD | 0.02084 | 1.0454 | 1.5515 | 121 | failed |
+| 100 ms delay | barrier-ADP | 0.15046 | 0.7361 | 2.4766 | 300 | failed |
+| +20% mass | barrier-PD | 0.02075 | 1.2304 | 1.0566 | 0 | success |
+| +20% mass | barrier-ADP | 0.10221 | 1.4629 | 1.1918 | 0 | success |
+| 2x disturbance | barrier-PD | 0.03404 | 1.2443 | 1.0688 | 0 | success |
+| 2x disturbance | barrier-ADP | 0.10581 | 1.4562 | 1.2048 | 0 | success |
 
-The physical communication limit is `8.0 m` and the obstacle safety radius is
-`1.2 m`. Every successful row completed the full horizon with zero logged
-communication-violation samples and zero obstacle-violation samples.
-
-## Failure case: 100 ms delayed information
-
-At 100 ms delay, both controllers remained finite and retained low terminal
-formation error, but entered the obstacle safety radius. Barrier-PD had a
-minimum distance of `1.0454 m` and 121 obstacle-violation samples; the full
-engineering variant had `1.0904 m` and 84 samples. The appropriate conclusion
-is not that the system is safe at 100 ms, but that this particular static
-barrier treatment is insufficient under that delay. This is retained as a
-reproducible failure case rather than excluded from the experiment.
+The 100 ms delay case is retained as a failure boundary. Moving-obstacle and
+delay runs are empirical stress tests outside the static, no-delay theorem.
 
 ## Interpretation
 
-- Under the tested nominal, moving-obstacle, 50 ms-delay and +20% mass
-  conditions, both engineering controllers completed safely.
-- The full engineering variant has slightly lower terminal error and RMS input
-  in these deterministic runs, but the differences are too small and the
-  sample count too limited for a broad performance claim.
-- The 100 ms delay failure establishes an observed engineering boundary for
-  this configuration; it does not identify a universal delay threshold.
-- `rnn_error_available=false` is intentional. The current adaptive residual is
-  not yet a paper-equivalent RNN observer, so reporting a fabricated RNN error
-  would be misleading.
+- Low-gain PD and ordinary ADP show why tracking alone is not a safety metric.
+- Barrier-PD versus low-gain PD isolates the benefit of heuristic safety
+  feedback for a traditional controller.
+- Barrier-ADP versus ordinary ADP isolates the benefit of adding that same
+  barrier mechanism to the ADP controller.
+- Barrier-ADP versus barrier-PD compares adaptive optimization with fixed-gain
+  safety control; it does not prove universal optimality or stability.
 
 ## Evidence files
 
-- `summary_nominal_safety_tuned.csv`
-- `summary_dynamic_obstacle_moving.csv`
-- `summary_delay_50ms.csv`
-- `summary_mass_mass120.csv`
-- `summary_delay_100ms.csv` (retained failure case)
-
-The earlier `summary_nominal_baseline.csv` records a pre-correction diagnostic
-run where direct high-gain barrier errors caused communication divergence. It
-is intentionally excluded from the main table and preserved only for the
-implementation history.
+- `summary_nominal_four_way_final.csv`
+- `summary_dynamic_obstacle_final.csv`
+- `summary_delay_final_50ms.csv`
+- `summary_delay_final_100ms.csv`
+- `summary_mass_final.csv`
+- `summary_disturbance_final.csv`
