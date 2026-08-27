@@ -21,6 +21,9 @@ deployment.
   static or moving obstacle, and delayed neighbour/leader state use.
 - Low-gain PD, heuristic barrier-PD, ordinary actor-critic ADP, heuristic
   barrier-ADP, plus a separately labelled engineering-stabilized branch.
+- Barrier-ADP uses an explicit bounded safety layer: conservative obstacle
+  radius inflation for delayed information, local obstacle-state sensing, and
+  inward-action removal near the safety boundary.
 - Deterministic RK4 integration, per-run JSON manifests, and a CSV summary
   containing tracking, safety, connectivity, control-effort and completion
   metrics.
@@ -38,6 +41,13 @@ deployment.
 The supplied MATLAB Case 4 explicitly adds a PD term and clips the output, so
 it is represented by `engineering_stabilized`, not by the barrier-ADP branch. See
 [`docs/paper_code_audit.md`](docs/paper_code_audit.md) before comparing results.
+
+For delayed-information tests, neighbour and leader states are delayed but the
+obstacle position of each agent is treated as a local measurement. The
+barrier-ADP safety layer inflates the control radius by `safety_margin` plus
+`max_speed * delay_age`, and removes the action component pointing toward the
+obstacle near that conservative radius. This is a bounded heuristic safety
+layer, not a CBF-QP or a formal delayed-system guarantee.
 
 ## Quick start
 

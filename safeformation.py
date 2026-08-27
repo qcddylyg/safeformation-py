@@ -25,6 +25,8 @@ class Config:
     delay_steps: int = 0
     dynamic_obstacle: bool = False
     disturbance_scale: float = 1.0
+    safety_margin: float = 0.10
+    max_speed: float = 2.0
     seed: int = 42
 
     @property
@@ -95,7 +97,7 @@ def errors(p, v, p0, v0, t, cfg: Config):
     return sc, so, kappa
 
 
-def engineering_constraint_force(p, p0, i: int, t: float, cfg: Config):
+def engineering_constraint_force(p, p0, i: int, t: float, cfg: Config, obstacle_radius: float | None = None, barrier_gain: float = 8.0):
     """Bounded obstacle and connectivity correction for engineering variants.
 
     This is deliberately separate from the MATLAB logarithmic error state. It
@@ -103,12 +105,14 @@ def engineering_constraint_force(p, p0, i: int, t: float, cfg: Config):
     directionless PD command and is not a CBF-QP implementation.
     """
     force = np.zeros(2)
+    control_radius = cfg.obstacle_radius if obstacle_radius is None else float(obstacle_radius)
     center = obstacle_center(t, cfg)
     delta = p[:, i] - center
     distance = float(np.linalg.norm(delta))
-    margin = max(distance - cfg.obstacle_radius, 0.08)
+    margin = max(distance - control_radius, 0.08)
     if distance < cfg.obstacle_activation:
-        strength = 8.0 * ((cfg.obstacle_activation - distance) / (cfg.obstacle_activation - cfg.obstacle_radius)) ** 2
+        activation_gap = max(cfg.obstacle_activation - control_radius, 0.05)
+        strength = barrier_gain * ((cfg.obstacle_activation - distance) / activation_gap) ** 2
         force += strength * delta / (margin * (distance + 1e-6))
     # Each active edge pulls back only close to the physical communication limit.
     for j in range(cfg.n_agents):
@@ -241,7 +245,29 @@ class Controller:
         self._has_transition[i] = True
         return action, td, float(np.linalg.norm(self._wa[i]))
 
-    def __call__(self, p, v, p0, v0, t):
+    def _conservative_obstacle_radius(self) -> float:
+        # Reserve distance for the worst motion during the information age.
+        delay_horizon = self.cfg.delay_steps * self.cfg.dt
+        return self.cfg.obstacle_radius + self.cfg.safety_margin + self.cfg.max_speed * delay_horizon
+
+    def _obstacle_safety_layer(self, action: np.ndarray, p_i: np.ndarray, v_i: np.ndarray, t: float) -> np.ndarray:
+        """Remove inward radial action and add braking near the conservative radius."""
+        center = obstacle_center(t, self.cfg)
+        delta = p_i - center
+        distance = float(np.linalg.norm(delta))
+        if distance < 1e-8:
+            return action
+        direction = delta / distance
+        radius = self._conservative_obstacle_radius()
+        guard = 0.20
+        if distance >= radius + guard:
+            return action
+        inward_action = min(0.0, float(np.dot(action, direction)))
+        inward_velocity = min(0.0, float(np.dot(v_i, direction)))
+        braking = -inward_action + 4.0 * (-inward_velocity)
+        return action + braking * direction
+
+    def __call__(self, p, v, p0, v0, t, safety_state=None):
         sc, so, kappa = errors(p, v, p0, v0, t, self.cfg)
         u = np.zeros_like(p)
         adp_td = np.zeros(self.cfg.n_agents, dtype=float)
@@ -264,7 +290,18 @@ class Controller:
                     # with the same bounded heuristic safety correction used
                     # by barrier-PD. Barrier state is also part of chi, so the
                     # comparison tests both explicit safety feedback and ADP.
-                    u[:, i] = adp_action + engineering_constraint_force(p, p0, i, t, self.cfg)
+                    u[:, i] = adp_action + engineering_constraint_force(
+                        p,
+                        p0,
+                        i,
+                        t,
+                        self.cfg,
+                        obstacle_radius=self._conservative_obstacle_radius(),
+                        barrier_gain=10.0,
+                    )
+                    safety_p = p if safety_state is None else safety_state[0]
+                    safety_v = v if safety_state is None else safety_state[1]
+                    u[:, i] = self._obstacle_safety_layer(u[:, i], safety_p[:, i], safety_v[:, i], t)
                 else:
                     u[:, i] = adp_action
                 adp_td[i] = td
@@ -315,7 +352,7 @@ def run(controller_name: str, cfg: Config):
         obs = (p.copy(), v.copy(), p0.copy(), v0.copy())
         delayed.append(obs)
         used = delayed[max(0, len(delayed) - cfg.delay_steps - 1)]
-        u, aux = controller(*used, t)
+        u, aux = controller(*used, t, safety_state=(p, v))
         history["t"].append(t); history["p"].append(p.copy()); history["v"].append(v.copy())
         history["p0"].append(p0.copy()); history["v0"].append(v0.copy()); history["u"].append(u.copy())
         history["sc"].append(aux["sc"]); history["so"].append(aux["so"]); history["kappa"].append(aux["kappa"])

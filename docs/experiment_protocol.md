@@ -15,6 +15,9 @@ engineering comparisons and does not make a new stability or safety claim.
 - Static obstacle centered at `[2.5, 0]`, safety radius `1.2 m` and activation
   radius `2.5 m`.
 - Communication success uses the physical active-link limit `8.0 m`.
+- `barrier_adp` uses `safety_margin=0.10 m`, `max_speed=2.0 m/s`, and local
+  obstacle-state sensing; delayed information applies to neighbours and the
+  leader. Its conservative control radius is `r + margin + max_speed * delay`.
 - Fixed seed `42`; document every different seed in the saved manifest.
 
 ## Required comparison runs
@@ -32,6 +35,10 @@ failed run with a completed 50-second run.
 
 `engineering_stabilized` is an optional appendix controller. It must not be
 used as a proxy for the main heuristic barrier-ADP comparison.
+
+For the safety claim in this project, a controller passes a scenario only when
+the full retained trajectory has no obstacle or communication violation. A
+larger margin is useful, but it does not replace this pass/fail criterion.
 
 ## Commands
 
@@ -62,7 +69,8 @@ python scripts\run_matrix.py --scenario disturbance --disturbance-scale 2.0 --st
 3. The moving-obstacle and delay tests sit outside the paper's static,
    no-delay theorem. State them as stress-test observations only.
 4. Do not call `heuristic_barrier_pd` a CBF-QP. Do not call `barrier_adp` a
-   paper RNN system-identification reproduction.
+   paper RNN system-identification reproduction. The conservative safety layer
+   is a bounded heuristic, not a delayed-system theorem.
 5. A lower tracking error alone does not establish that ADP is superior;
    report safety and control effort together and retain failures.
 6. Three or fewer repeat runs support descriptive variation, not broad

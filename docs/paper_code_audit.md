@@ -26,7 +26,7 @@ reproductions.
 | Case 1 | low-gain saturated formation PD | `low_gain_pd` | implemented |
 | Case 2 | PD with double-barrier error | `heuristic_barrier_pd` | heuristic implementation |
 | Case 3 | ordinary ADP without barriers | `ordinary_adp` | actor-critic surrogate |
-| Proposed experiment | heuristic barrier-ADP | `barrier_adp` | actor-critic surrogate |
+| Proposed experiment | heuristic barrier-ADP plus conservative local safety layer | `barrier_adp` | actor-critic surrogate |
 | Engineering appendix | `u_pd + 0.1 * u_adp` with saturation | `engineering_stabilized` | engineering-stabilized branch |
 | post-processing figures | tracking, obstacle, link, control and weight diagnostics | metrics, CSV, plots | partial; weight diagnostics excluded |
 

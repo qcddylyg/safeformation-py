@@ -35,6 +35,14 @@ def test_adp_branch_records_online_diagnostics():
     assert result["adp_td"].shape[0] == len(result["t"])
 
 
+def test_barrier_adp_delay_safety_layer_avoids_obstacle():
+    cfg = Config(horizon=3.0, dt=0.01, delay_steps=10)
+    result = run("barrier_adp", cfg)
+    summary = metrics(result, cfg)
+    assert summary["obstacle_violation_samples"] == 0
+    assert summary["min_obstacle_distance"] >= cfg.obstacle_radius
+
+
 def test_delay_changes_the_controlled_state_path_but_remains_finite():
     nominal = Config(horizon=0.4, dt=0.02)
     delayed = Config(horizon=0.4, dt=0.02, delay_steps=5)
