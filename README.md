@@ -13,6 +13,16 @@ It is an **engineering reproduction and extension**, not a claim of a new
 control theorem, an exact line-by-line paper reproduction, or a real-robot
 deployment.
 
+## 项目描述
+
+**基于启发式屏障约束与 ADP 的多智能体安全编队仿真**
+
+**技术/方法：**Python/MATLAB、NumPy、RK4 数值积分、非线性多智能体动力学、PD 控制、Actor-Critic ADP、启发式屏障约束、通信延迟与输入饱和。
+
+- 建立 Leader-Follower 多智能体编队模型，统一处理编队跟踪、通信距离、障碍物安全距离、外部扰动、质量变化和控制输入边界。
+- 采用“有无屏障 × PD/ADP”的四组主对比：低增益 PD、启发式屏障-PD、无屏障普通 ADP、启发式屏障-ADP；另保留 `engineering_stabilized` 作为附录工程分支。
+- 在名义、动态障碍物、50/100 ms 延迟、质量增加 20% 和扰动增强等工况下，比较编队误差、安全距离、通信违例、控制能量和饱和率。当前配置下，屏障-ADP 借助保守安全半径、延迟补偿和本地障碍物测量，在所测场景中保持无障碍物越界；该结论是数值实验观察，不是普适安全定理。
+
 ## What is implemented
 
 - Four 2-D followers, one virtual leader, the supplied directed topology and
@@ -34,8 +44,8 @@ deployment.
 |---|---|---|
 | `low_gain_pd` (`pd`) | `low_gain_pd_baseline` | Low-gain formation PD baseline. |
 | `heuristic_barrier_pd` (`barrier_pd`) | `heuristic_barrier_pd` | Barrier-PD heuristic, not a CBF-QP. |
-| `ordinary_adp` (`rnn_adp`) | `ordinary_adp_no_barrier_actor_critic` | Actor-critic ADP without barrier state. |
-| `barrier_adp` (`paper_rnn_adp`, `paper_exact`) | `heuristic_barrier_adp_actor_critic` | Actor-critic ADP with heuristic barrier state. |
+| `ordinary_adp` (legacy `rnn_adp`) | `ordinary_adp_no_barrier_actor_critic` | Actor-critic ADP without barrier state. The `rnn_adp` name is retained only for compatibility. |
+| `barrier_adp` (legacy `paper_rnn_adp`, `paper_exact`) | `heuristic_barrier_adp_actor_critic` | Actor-critic ADP with heuristic barrier state. The legacy names do not indicate an RNN implementation. |
 | `engineering_stabilized` (`full`) | `engineering_stabilized` | PD plus bounded residual; appendix only. |
 
 The supplied MATLAB Case 4 explicitly adds a PD term and clips the output, so
@@ -84,8 +94,11 @@ python scripts\run_matrix.py --scenario mass --mass-scale 1.2 --steps 5000 --dt 
 python scripts\run_matrix.py --scenario nominal --steps 5000 --dt 0.01 --controllers engineering_stabilized --run-label engineering_appendix
 ```
 
-The 100 ms delay run is intentionally retained as a failure case. Do not
-interpret `success=false` as a crash: it means the safety radius was violated.
+The 100 ms delay run is intentionally retained as a stress test. In the
+checked results, barrier-PD violates the physical obstacle radius while
+barrier-ADP completes the run without obstacle or communication violations
+under the local-obstacle-sensing assumption. Do not interpret `success=false`
+as a crash: it means that a physical constraint was violated.
 
 ## Experiment protocol
 
